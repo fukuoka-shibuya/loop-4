@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>loop-4 報告書</title>
+<style>
+  /* 無地のひな形。色・背景色・枠線・影・角丸などの飾りは意図的に付けていない。
+     見た目を変えるのはオーナーのコメント指示があったときだけ(CLAUDE.md 参照)。 */
+  body { margin: 0; padding: 16px; font-family: sans-serif; font-size: 15px; line-height: 1.8; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 20px; margin: 0 0 16px; }
+  h2 { font-size: 16px; margin: 28px 0 8px; }
+  dl { margin: 0; }
+  dt { font-weight: 700; margin: 10px 0 0; }
+  dd { margin: 0 0 0 1em; white-space: pre-wrap; }
+  p { margin: 0 0 8px; }
+  ol { margin: 0 0 12px; padding-left: 1.6em; }
+  li { margin: 0 0 4px; }
+  textarea { width: 100%; max-width: 100%; min-height: 120px; padding: 8px; font: inherit; }
+  button { padding: 10px 16px; margin-top: 8px; font: inherit; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1 id="title">loop-4 報告書</h1>
+
+  <h2>状況</h2>
+  <dl>
+    <dt>サイクル</dt>
+    <dd id="cycle-id">—</dd>
+    <dt>更新時刻</dt>
+    <dd id="generated-at">—</dd>
+    <dt>状況</dt>
+    <dd id="status-text">—</dd>
+    <dt>ホームページ</dt>
+    <dd id="site-link">—</dd>
+  </dl>
+
+  <h2>コメント</h2>
+  <p>ここに書いて送信すると、次のサイクルでAIが読み取り、報告書やホームページの見た目・中身に反映します。</p>
+  <p>送信内容は公開リポジトリの Issue として、誰でも見られる場所に保存されます。個人情報(氏名・住所・連絡先など)は書かないでください。</p>
+  <ol>
+    <li>下の欄に伝えたいことを全部書きます</li>
+    <li>送信ボタンを押すと、書いた内容が入力済みの送信画面が新しいタブで開きます</li>
+    <li>開いた画面の「Submit new issue」を1回押すと送信完了です(GitHub にログインしていない場合は先にログイン画面が出ます。書いた内容は引き継がれます)</li>
+  </ol>
+  <textarea id="comment-text" placeholder="例:報告書に「今日やったこと」の欄を足してほしい / ホームページに題名を表示してほしい"></textarea>
+  <button id="comment-send" type="button">送信する</button>
+  <p id="comment-note"></p>
+  <p>書きかけの内容は自動保存されません(ページを閉じたり更新すると消えます)。
+     <a href="https://github.com/fukuoka-shibuya/loop-4/issues" rel="noopener">過去のコメント一覧を見る</a></p>
+
+</div>
+
+<script src="data/cycle.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  /* 状況欄の表示。値はすべて textContent で入れるため、HTML として解釈される余地がない。 */
+  var d = window.REPORT_DATA;
+  function put(id, text) { document.getElementById(id).textContent = text; }
+
+  if (!d) {
+    put('status-text', 'data/cycle.js を読み込めませんでした。node report/build.js を実行してください。');
+  } else {
+    if (d.title) {
+      document.getElementById('title').textContent = d.title;
+      document.title = d.title;
+    }
+    put('cycle-id', d.cycle_id || '—');
+    put('generated-at', d.generated_at || '—');
+    put('status-text', d.status_text || '—');
+    var siteCell = document.getElementById('site-link');
+    if (d.site_url) {
+      siteCell.textContent = '';
+      var link = document.createElement('a');
+      link.href = d.site_url;
+      link.rel = 'noopener';
+      link.textContent = d.site_url;
+      siteCell.appendChild(link);
+    }
+  }
+
+  /* コメント送信。GitHub の Issue 作成画面を、本文入力済みの状態で開く。
+     このページ自体は投稿しない(投稿用の鍵を公開ページに置かないため)。 */
+  var REPO = 'https://github.com/fukuoka-shibuya/loop-4';
+  var ta = document.getElementById('comment-text');
+  var note = document.getElementById('comment-note');
+
+  document.getElementById('comment-send').addEventListener('click', function () {
+    var text = ta.value.trim();
+    if (!text) {
+      note.textContent = 'コメントが空です。内容を書いてから送信してください。';
+      return;
+    }
+    var title = 'コメント: ' + text.split('\n')[0].slice(0, 50);
+    /* タイトルの50字切りが絵文字(サロゲートペア)の途中に当たることがある。1単位余分に削る。 */
+    if (/[\uD800-\uDBFF]$/.test(title)) title = title.slice(0, -1);
+    var suffix = (d && d.cycle_id ? '\n\n(閲覧していた報告書: ' + d.cycle_id + ')' : '');
+    var omitNote = '\n\n(文字数の上限により末尾を省略しています。続きは欄に残した部分から送ってください)';
+
+    /* GitHub が受け付ける URL 長(約8KB)に収まるよう、エンコード後の長さで本文を切り詰める。
+       送れなかった続きは送信後も欄に残す(送れた分だけ欄から消す)。 */
+    var MAX_ENCODED = 6000;
+    var sentText = text;
+    var truncated = false;
+    while (sentText && encodeURIComponent(sentText + (truncated ? omitNote : '') + suffix).length > MAX_ENCODED) {
+      sentText = sentText.slice(0, -200);
+      if (/[\uD800-\uDBFF]$/.test(sentText)) sentText = sentText.slice(0, -1);
+      truncated = true;
+    }
+    var body = sentText + (truncated ? omitNote : '') + suffix;
+    var url = REPO + '/issues/new?title=' + encodeURIComponent(title) + '&body=' + encodeURIComponent(body);
+
+    /* window.open の第3引数に 'noopener' を渡すと成功時も null が返りブロックと区別できないため、
+       開いた後に opener を切って同等の安全性を保つ。 */
+    var opened = window.open(url, '_blank');
+    if (opened) {
+      try { opened.opener = null; } catch (e) {}
+      ta.value = truncated ? text.slice(sentText.length) : '';
+      note.textContent = '投稿画面を開きました(内容は入力済みです)。「Submit new issue」を1回押すと送信完了です。'
+        + (truncated ? ' 長文のため末尾を省略しました。省略された続きは欄に残っています。' : '');
+    } else {
+      /* ポップアップブロック時は「開きました」と偽らず、代替リンクを出す(未送信のため欄は消さない)。 */
+      note.textContent = 'ポップアップがブロックされたため開けませんでした。'
+        + (truncated ? '(長文のため末尾を省略した内容が開きます。全文は欄に残っています)' : '')
+        + 'こちらからどうぞ: ';
+      var a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.id = 'comment-fallback-link';
+      a.textContent = '投稿画面を開く(内容は入力済み)';
+      note.appendChild(a);
+    }
+  });
+})();
+</script>
+</body>
+</html>
